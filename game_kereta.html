@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Lumba Lebuhraya</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-tap-highlight-color: transparent; }
+    body {
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    #hud {
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 14px;
+      background: #1e293b;
+      border-bottom: 2px solid #334155;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .nitro-bar {
+      width: 90px;
+      height: 10px;
+      background: #0f172a;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid #475569;
+      display: inline-block;
+      vertical-align: middle;
+      margin-left: 6px;
+    }
+    .nitro-fill {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #38bdf8, #22d3ee);
+      transition: width 0.08s linear;
+    }
+    #game-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 420px;
+      height: 72vh;
+      max-height: 680px;
+      background: #1e293b;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    #overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.85);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      gap: 14px;
+    }
+    #overlay h1 { font-size: 26px; color: #38bdf8; }
+    #overlay p { font-size: 14px; color: #cbd5e1; line-height: 1.5; max-width: 300px; }
+    button.primary {
+      background: #0284c7;
+      color: #fff;
+      border: none;
+      padding: 12px 26px;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.primary:active { transform: scale(0.97); }
+    #controls {
+      width: 100%;
+      max-width: 420px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      padding: 10px;
+      background: #1e293b;
+    }
+    .ctrl-btn {
+      background: #334155;
+      color: #f8fafc;
+      border: 1px solid #475569;
+      border-radius: 10px;
+      padding: 14px 8px;
+      font-size: 15px;
+      font-weight: 700;
+      touch-action: none;
+    }
+    .ctrl-btn:active, .ctrl-btn.active { background: #0284c7; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div>SKOR: <span id="score">0</span> | REKOD: <span id="best">0</span></div>
+    <div>NITRO<span class="nitro-bar"><span id="nitro-fill" class="nitro-fill"></span></span></div>
+  </div>
+
+  <div id="game-wrap">
+    <canvas id="game"></canvas>
+    <div id="overlay">
+      <h1 id="title">Lumba Lebuhraya</h1>
+      <p id="desc">Elak kereta lawan, kutip syiling emas, dan tekan Nitro untuk pecut lebih laju.</p>
+      <button id="start-btn" class="primary">Mula Main</button>
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="btn-left" class="ctrl-btn">◀ KIRI</button>
+    <button id="btn-nitro" class="ctrl-btn">⚡ NITRO</button>
+    <button id="btn-right" class="ctrl-btn">KANAN ▶</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const bestEl = document.getElementById('best');
+    const nitroFillEl = document.getElementById('nitro-fill');
+    const overlay = document.getElementById('overlay');
+    const titleEl = document.getElementById('title');
+    const descEl = document.getElementById('desc');
+    const startBtn = document.getElementById('start-btn');
+
+    const LANES = 3;
+    let width = 0, height = 0, laneWidth = 0;
+    let bestScore = Number(localStorage.getItem('lumba_rekod') || 0);
+    bestEl.textContent = bestScore;
+
+    let running = false;
+    let score = 0;
+    let speed = 5;
+    let nitro = 100;
+    let roadOffset = 0;
+    let spawnTimer = 0;
+    let coinTimer = 0;
+
+    const input = { left: false, right: false, nitro: false };
+    const player = { lane: 1, x: 0, y: 0, w: 44, h: 76 };
+    let enemies = [];
+    let coins = [];
+
+    function resize() {
+      const rect = document.getElementById('game-wrap').getBoundingClientRect();
+      width = canvas.width = rect.width;
+      height = canvas.height = rect.height;
+      laneWidth = width / LANES;
+      player.w = Math.min(48, laneWidth * 0.52);
+      player.h = player.w * 1.7;
+      player.x = laneCenter(player.lane) - player.w / 2;
+      player.y = height - player.h - 24;
+    }
+
+    function laneCenter(lane) {
+      return laneWidth * lane + laneWidth / 2;
+    }
+
+    function resetGame() {
+      score = 0;
+      speed = 5;
+      nitro = 100;
+      enemies = [];
+      coins = [];
+      spawnTimer = 0;
+      coinTimer = 0;
+      player.lane = 1;
+      resize();
+      scoreEl.textContent = '0';
+      nitroFillEl.style.width = '100%';
+    }
+
+    function startGame() {
+      resetGame();
+      running = true;
+      overlay.style.display = 'none';
+      requestAnimationFrame(loop);
+    }
+
+    function gameOver() {
+      running = false;
+      if (score > bestScore) {
+        bestScore = score;
+        localStorage.setItem('lumba_rekod', String(bestScore));
+        bestEl.textContent = bestScore;
+      }
+      titleEl.textContent = 'Permainan Tamat!';
+      descEl.textContent = `Skor anda: ${score} | Rekod terbaik: ${bestScore}`;
+      startBtn.textContent = 'Main Semula';
+      overlay.style.display = 'flex';
+    }
+
+    function spawnEnemy() {
+      const lane = Math.floor(Math.random() * LANES);
+      const colors = ['#ef4444', '#f59e0b', '#a855f7', '#10b981'];
+      enemies.push({
+        lane,
+        x: laneCenter(lane) - player.w / 2,
+        y: -player.h - 10,
+        w: player.w,
+        h: player.h,
+        speedOffset: 1 + Math.random() * 2.2,
+        color: colors[Math.floor(Math.random() * colors.length)]
+      });
+    }
+
+    function spawnCoin() {
+      const lane = Math.floor(Math.random() * LANES);
+      coins.push({
+        lane,
+        x: laneCenter(lane),
+        y: -20,
+        r: Math.max(10, player.w * 0.24)
+      });
+    }
+
+    function rectsOverlap(a, b) {
+      return (
+        a.x < b.x + b.w - 4 &&
+        a.x + a.w - 4 > b.x &&
+        a.y < b.y + b.h - 4 &&
+        a.y + a.h - 4 > b.y
+      );
+    }
+
+    function drawRoad() {
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(0, 0, width, height);
+
+      // Bahu jalan
+      const shoulder = Math.max(8, width * 0.03);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, shoulder, height);
+      ctx.fillRect(width - shoulder, 0, shoulder, height);
+
+      // Garisan lorong putus-putus
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([24, 24]);
+      ctx.lineDashOffset = -roadOffset;
+
+      for (let i = 1; i < LANES; i++) {
+        const x = i * laneWidth;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
+    function drawCar(x, y, w, h, bodyColor, isPlayer) {
+      ctx.fillStyle = bodyColor;
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, 8);
+      ctx.fill();
+
+      // Cermin depan
+      ctx.fillStyle = '#0f172a';
+      const winPad = w * 0.16;
+      ctx.fillRect(x + winPad, y + h * 0.2, w - winPad * 2, h * 0.22);
+      ctx.fillRect(x + winPad, y + h * 0.56, w - winPad * 2, h * 0.16);
+
+      // Lampu hadapan / belakang
+      ctx.fillStyle = isPlayer ? '#fef08a' : '#fca5a5';
+      if (isPlayer) {
+        ctx.fillRect(x + 5, y + 2, 7, 5);
+        ctx.fillRect(x + w - 12, y + 2, 7, 5);
+      } else {
+        ctx.fillRect(x + 5, y + h - 6, 7, 4);
+        ctx.fillRect(x + w - 12, y + h - 6, 7, 4);
+      }
+    }
+
+    function drawCoin(c) {
+      ctx.fillStyle = '#facc15';
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#ca8a04';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function update() {
+      const usingNitro = input.nitro && nitro > 2;
+      if (usingNitro) {
+        nitro = Math.max(0, nitro - 1.4);
+      } else {
+        nitro = Math.min(100, nitro + 0.35);
+      }
+      nitroFillEl.style.width = `${nitro}%`;
+
+      const currentSpeed = (speed + score * 0.004) * (usingNitro ? 1.75 : 1);
+      roadOffset = (roadOffset + currentSpeed) % 48;
+
+      const targetX = laneCenter(player.lane) - player.w / 2;
+      player.x += (targetX - player.x) * 0.25;
+
+      spawnTimer++;
+      const spawnInterval = Math.max(28, 62 - Math.floor(score / 80));
+      if (spawnTimer >= spawnInterval) {
+        spawnTimer = 0;
+        spawnEnemy();
+      }
+
+      coinTimer++;
+      if (coinTimer >= 55) {
+        coinTimer = 0;
+        spawnCoin();
+      }
+
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        e.y += currentSpeed * 0.75 + e.speedOffset;
+        if (rectsOverlap(player, e)) {
+          gameOver();
+          return;
+        }
+        if (e.y > height + 100) {
+          enemies.splice(i, 1);
+          score += 5;
+          scoreEl.textContent = String(score);
+        }
+      }
+
+      for (let i = coins.length - 1; i >= 0; i--) {
+        const c = coins[i];
+        c.y += currentSpeed * 0.8;
+        const coinBox = { x: c.x - c.r, y: c.y - c.r, w: c.r * 2, h: c.r * 2 };
+        if (rectsOverlap(player, coinBox)) {
+          coins.splice(i, 1);
+          score += 15;
+          nitro = Math.min(100, nitro + 12);
+          scoreEl.textContent = String(score);
+        } else if (c.y > height + 40) {
+          coins.splice(i, 1);
+        }
+      }
+    }
+
+    function render() {
+      drawRoad();
+      coins.forEach(drawCoin);
+      enemies.forEach(e => drawCar(e.x, e.y, e.w, e.h, e.color, false));
+      drawCar(player.x, player.y, player.w, player.h, '#38bdf8', true);
+    }
+
+    function loop() {
+      if (!running) return;
+      update();
+      render();
+      requestAnimationFrame(loop);
+    }
+
+    let laneCooldown = 0;
+    setInterval(() => {
+      if (!running) return;
+      if (laneCooldown > 0) { laneCooldown--; return; }
+      if (input.left && player.lane > 0) {
+        player.lane--;
+        laneCooldown = 7;
+      } else if (input.right && player.lane < LANES - 1) {
+        player.lane++;
+        laneCooldown = 7;
+      }
+    }, 16);
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') input.left = true;
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') input.right = true;
+      if (e.key === ' ' || e.key.toLowerCase() === 'w' || e.key === 'ArrowUp') input.nitro = true;
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') input.left = false;
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') input.right = false;
+      if (e.key === ' ' || e.key.toLowerCase() === 'w' || e.key === 'ArrowUp') input.nitro = false;
+    });
+
+    function bindHold(id, key) {
+      const el = document.getElementById(id);
+      const down = (e) => { e.preventDefault(); input[key] = true; el.classList.add('active'); };
+      const up = (e) => { e.preventDefault(); input[key] = false; el.classList.remove('active'); };
+      el.addEventListener('pointerdown', down);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointerleave', up);
+      el.addEventListener('pointercancel', up);
+    }
+
+    bindHold('btn-left', 'left');
+    bindHold('btn-right', 'right');
+    bindHold('btn-nitro', 'nitro');
+
+    startBtn.addEventListener('click', startGame);
+    window.addEventListener('resize', resize);
+    resize();
+  </script>
+</body>
+</html>
+
